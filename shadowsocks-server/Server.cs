@@ -31,7 +31,7 @@ namespace shadowsocks
             // Bind the socket to the sever endpoint and listen for incoming connections.
             listener.Bind(severEndPoint);
             //half open count
-            listener.Listen(10);
+            listener.Listen(100);
 
             // Start an asynchronous socket to listen for connections.
             Console.WriteLine("Waiting for a connection...");
@@ -81,7 +81,7 @@ namespace shadowsocks
         public Socket remote;
         public Socket connection;
         // Size of receive buffer.
-        public const int BufferSize = 2048;
+        public const int BufferSize = 4096;
         // remote receive buffer
         public byte[] remoteBuffer = new byte[BufferSize];
         // connection receive buffer
@@ -123,8 +123,9 @@ namespace shadowsocks
         public void Close()
         {
             encryptor.Dispose();
+#if !DEBUG
             Console.WriteLine("close:" + connection.RemoteEndPoint.ToString());
-            
+#endif
             if (connection != null)
             {
                 try
@@ -219,12 +220,12 @@ namespace shadowsocks
                     }
                     else if (3 == (char)ar.AsyncState)
                     {
-                        //ipv6 url
+                        //url
                         destAddr = ASCIIEncoding.Default.GetString(buff);
                     }
                     else
                     {
-                        //url
+                        //ipv6
                         destAddr = string.Format("[{0:x2}{1:x2}:{2:x2}{3:x2}:{4:x2}{5:x2}:{6:x2}{7:x2}:{8:x2}{9:x2}:{10:x2}{11:x2}:{12:x2}{13:x2}:{14:x2}{15:x2}]"
                             , buff[0], buff[1], buff[2], buff[3], buff[4], buff[5], buff[6], buff[7], buff[8], buff[9], buff[10], buff[11], buff[12], buff[13], buff[14], buff[15]);
                     }
@@ -337,7 +338,9 @@ namespace shadowsocks
                 }
                 else
                 {
+#if !DEBUG
                     Console.WriteLine("client closed");
+#endif
                     this.Close();
                 }
             }
@@ -363,8 +366,9 @@ namespace shadowsocks
                 }
                 else
                 {
-                    //remote closed
+#if !DEBUG
                     Console.WriteLine("remote closed");
+#endif
                     this.Close();
                 }
             }
@@ -411,5 +415,4 @@ namespace shadowsocks
             }
         }
     }
-
 }

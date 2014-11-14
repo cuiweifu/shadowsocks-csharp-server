@@ -41,7 +41,7 @@ namespace shadowsocks
             catch (Exception e)
             {
                 Console.WriteLine(e);
-                return new Config
+                Config config =  new Config
                 {
                     server = "127.0.0.1",
                     server_port = 8388,
@@ -49,6 +49,9 @@ namespace shadowsocks
                     method = "aes-128-cfb",
                     isDefault = true
                 };
+                if (!File.Exists(@"config.json"))
+                    Save(config);
+                return config;
             }
         }
 

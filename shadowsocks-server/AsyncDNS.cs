@@ -60,7 +60,7 @@ namespace shadowsocks
             DateTime now = DateTime.Now;
             foreach (KeyValuePair<string, DNSResult> a in result)
             {
-                if ((now - a.Value.last_used).TotalSeconds >= 60)
+                if ((now - a.Value.last_used).TotalSeconds >= 120)
                 {
                     lst.Add(a.Key);
                 }
