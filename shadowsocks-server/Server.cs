@@ -9,19 +9,197 @@ using shadowsocks_csharp;
 using System.Threading;
 using System.Timers;
 
-
-
 namespace shadowsocks
 {
-    class Server
+    class ControlServer
     {
         private Config config;
+        Dictionary<int, Server> lstServer = new Dictionary<int, Server>();
+        public class UdpState
+        {
+            public UdpClient udpclient = null;
+            public IPEndPoint remoteIpEndPoint;
+            public UdpState(UdpClient udpclient, IPEndPoint remoteIpEndPoint)
+            {
+                this.udpclient = udpclient;
+                this.remoteIpEndPoint = remoteIpEndPoint;
+            }
+        }
+
+        public ControlServer(Config config)
+        {
+            this.config = config;
+        }
+
+        public void Start()
+        {
+            IPEndPoint remoteIpEndPoint = new IPEndPoint(IPAddress.Any, 4000);
+            UdpClient udpClient = new UdpClient(remoteIpEndPoint);
+            udpClient.BeginReceive(ReceiveCallBack, new UdpState(udpClient, remoteIpEndPoint));
+        }
+
+        public void ReceiveCallBack(IAsyncResult ar)
+        {
+            UdpClient udpClient = null;
+            UdpState udpState = null;
+            try
+            {
+                udpState = (UdpState)ar.AsyncState;
+                udpClient = udpState.udpclient;
+                byte[] data = udpClient.EndReceive(ar, ref udpState.remoteIpEndPoint);
+                string strdata = Encoding.ASCII.GetString(data);
+                string[] arrdata = strdata.Split(':');
+                if (arrdata.Length == 4)
+                {
+                    //if (arrdata[0] == "hi")//!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    {
+                        int port = int.Parse(arrdata[1]);
+                        if (arrdata[3] == "0")
+                        {
+                            //del
+                            if (lstServer.ContainsKey(port))
+                            {
+                                //stop server only!
+                                lstServer[port].Stop();
+                                lstServer.Remove(port);
+                                Console.WriteLine(String.Format("server {0} stopping...", port));
+                            }
+                        }
+                        if (arrdata[3] == "1")
+                        {
+                            //new
+                            if (lstServer.ContainsKey(port))
+                            {
+                                if (lstServer[port].config.password != arrdata[2])
+                                {
+                                    //Restarted
+                                    Console.WriteLine(String.Format("server {0} already run but passwd changed", port));
+                                    lstServer[port].Stop();
+                                    lstServer.Remove(port);
+                                    Console.WriteLine(String.Format("server {0} stopping...", port));
+                                    Config config = this.config.Copy();
+                                    config.server_port = port;
+                                    config.password = arrdata[2];
+                                    lstServer[port] = new Server(config);
+                                    lstServer[port].Start();
+                                    Console.WriteLine(String.Format("server {0} starting...", port));
+                                }
+                                else
+                                {
+                                    Console.WriteLine(String.Format("server {0} already run", port));
+                                }
+                            }
+                            else
+                            {
+                                Config config = this.config.Copy();
+                                config.server_port = port;
+                                config.password = arrdata[2];
+                                lstServer[port] = new Server(config);
+                                lstServer[port].Start();
+                                Console.WriteLine(String.Format("server {0} starting...", port));
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.ToString());
+            }
+            finally
+            {
+                try
+                {
+                    udpClient.BeginReceive(ReceiveCallBack, udpState);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.ToString());
+                }
+            }
+        }
+    }
+    
+    class ServerTransfer
+    {
+        public int nSetCount = 1000;
+        public UInt64 transfer_upload = 0;
+        public UInt64 transfer_download = 0;
+    }
+
+    class Server
+    {
+        public Config config;
         private Socket listener;
+        private ServerTransfer transfer;
 
         public Server(Config config)
         {
             this.config = config;
+            this.transfer = new ServerTransfer();
         }
+
+        public void SetTransfer(UInt64 du, UInt64 dd)
+        {
+            bool bSend = false;
+            lock (this.transfer)
+            {
+                this.transfer.transfer_upload += du;
+                this.transfer.transfer_download += dd;
+                //2KB~2MB
+                if (this.transfer.nSetCount-- <= 0)
+                {
+                    this.transfer.nSetCount = 1000;
+                    bSend = true;
+                }
+            }
+            if (bSend)
+                UpdateTransfer();
+        }
+
+        public void UpdateTransfer()
+        {
+            try
+            {
+                string strdata = null;
+                lock (this.transfer)
+                {
+                    strdata = String.Format("{0}:{1}:{2}", this.config.server_port, this.transfer.transfer_upload, this.transfer.transfer_download);
+                }
+                IPAddress ipaddress = IPAddress.Parse("127.0.0.1");
+                IPEndPoint remoteIpEndPoint = new IPEndPoint(ipaddress, 4001);
+                UdpClient udpClient = new UdpClient();
+                udpClient.Connect(remoteIpEndPoint);
+                byte[] data = Encoding.ASCII.GetBytes(strdata);
+                udpClient.BeginSend(data, data.Length, new AsyncCallback(UpdateTransferSendCallback), udpClient);
+            }
+            catch (Exception)
+            {
+                //Console.WriteLine(e.ToString());
+            }
+        }
+
+        public static void UpdateTransferSendCallback(IAsyncResult ar)
+        {
+            try
+            {
+                UdpClient u = (UdpClient)ar.AsyncState;
+                u.Close();
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    UdpClient u = (UdpClient)ar.AsyncState;
+                    u.Close();
+                }
+                catch (Exception)
+                {
+                    //Console.WriteLine(e.ToString());
+                }
+            }
+        }
+
 
         public void Start()
         {
@@ -31,8 +209,7 @@ namespace shadowsocks
             // Bind the socket to the sever endpoint and listen for incoming connections.
             listener.Bind(severEndPoint);
             //half open count
-            listener.Listen(100);
-
+            listener.Listen(10);
             // Start an asynchronous socket to listen for connections.
             Console.WriteLine("Waiting for a connection...");
             listener.BeginAccept(
@@ -52,7 +229,7 @@ namespace shadowsocks
             {
                 Socket listener = (Socket)ar.AsyncState;
                 Socket conn = listener.EndAccept(ar);
-                Handler handler = new Handler();
+                Handler handler = new Handler(this);
                 handler.connection = conn;
                 handler.encryptor = new Encryptor(config.method, config.password);
                 handler.config = config;
@@ -64,17 +241,25 @@ namespace shadowsocks
             }
             finally
             {
-                listener.BeginAccept(
-                    new AsyncCallback(AcceptCallback),
-                    listener);
+                try
+                {
+                    listener.BeginAccept(
+                        new AsyncCallback(AcceptCallback),
+                        listener);
+                }
+                catch (Exception)
+                {
+                    //stop by control
+                    //Console.WriteLine(e.ToString());
+                }
             }
         }
-
     }
 
 
     class Handler
     {
+        private Server server;
         public Encryptor encryptor = null;
         public Config config;
         // Client  socket.
@@ -90,10 +275,13 @@ namespace shadowsocks
         private int stage = 0;
         //remote addr
         private string destAddr = null;
+        private bool closed = false;
+        //Zombie Conn Clean
+        System.Threading.Timer timeOutTimer = null;
 
-        public Handler()
+        public Handler(Server server)
         {
-
+            this.server = server;
         }
 
         public void Start()
@@ -112,6 +300,7 @@ namespace shadowsocks
                     connection.BeginReceive(this.connetionBuffer, 0, 1, 0,
                         new AsyncCallback(handshakeReceiveCallback), null);
                 }
+                timeOutTimer = new System.Threading.Timer(new TimerCallback(ReceiveTimeOut), null, 10000, 100000);
             }
             catch (Exception e)
             {
@@ -120,17 +309,40 @@ namespace shadowsocks
             }
         }
 
+        public void ReceiveTimeOut(Object obj)
+        {
+            try
+            {
+                lock (timeOutTimer)
+                {
+                    this.timeOutTimer.Dispose();
+                    this.Close();
+                }
+            }
+            catch(Exception)
+            {
+                //already recycle
+            }
+        }
+
         public void Close()
         {
-            encryptor.Dispose();
-#if !DEBUG
-            Console.WriteLine("close:" + connection.RemoteEndPoint.ToString());
-#endif
+            lock (this)
+            {
+                if (closed)
+                {
+                    return;
+                }
+                closed = true;
+            }
             if (connection != null)
             {
                 try
                 {
+                    Console.WriteLine("close:" + connection.RemoteEndPoint.ToString());
                     connection.Shutdown(SocketShutdown.Both);
+                    connection.Close();
+                    connection = null;
                 }
                 catch (SocketException)
                 {
@@ -142,12 +354,28 @@ namespace shadowsocks
                 try
                 {
                     remote.Shutdown(SocketShutdown.Both);
+                    remote.Close();
+                    remote = null;
                 }
                 catch (SocketException)
                 {
                     //
                 }
             }
+            lock (this)
+            {
+                if (encryptor != null)
+                {
+                    encryptor.Dispose();
+                    encryptor = null;
+                }
+            }
+            config = null;
+            remoteBuffer = null;
+            connetionBuffer = null;
+            destAddr = null;
+            timeOutTimer = null;
+            server = null;
         }
 
         //Single thread
@@ -155,7 +383,24 @@ namespace shadowsocks
         {
             try
             {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            try
+            {
                 int bytesRead = connection.EndReceive(ar);
+                if (bytesRead == 0)
+                {
+                    throw new Exception("Error When handshakeReceiveCallback");
+                }
                 //Console.WriteLine("bytesRead" + bytesRead.ToString() + " stage" + stage.ToString());
                 if (stage == 0)
                 {
@@ -220,12 +465,12 @@ namespace shadowsocks
                     }
                     else if (3 == (char)ar.AsyncState)
                     {
-                        //url
+                        //ipv6 url
                         destAddr = ASCIIEncoding.Default.GetString(buff);
                     }
                     else
                     {
-                        //ipv6
+                        //url
                         destAddr = string.Format("[{0:x2}{1:x2}:{2:x2}{3:x2}:{4:x2}{5:x2}:{6:x2}{7:x2}:{8:x2}{9:x2}:{10:x2}{11:x2}:{12:x2}{13:x2}:{14:x2}{15:x2}]"
                             , buff[0], buff[1], buff[2], buff[3], buff[4], buff[5], buff[6], buff[7], buff[8], buff[9], buff[10], buff[11], buff[12], buff[13], buff[14], buff[15]);
                     }
@@ -241,6 +486,11 @@ namespace shadowsocks
                     int port = (int)(buff[0] << 8) + (int)buff[1];
 
                     stage = 6;
+                    //handshake completed
+                    lock (timeOutTimer)
+                    {
+                        this.timeOutTimer.Dispose();
+                    }
 
                     //Begin to connect remote
                     IPAddress ipAddress;
@@ -268,13 +518,38 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    //handshake time out
+                    lock (timeOutTimer)
+                    {
+                        this.timeOutTimer.Dispose();
+                    }
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch(Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         public void GetHostEntryCallback(IAsyncResult ar)
         {
+            try
+            {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
             DNSCbContext ct = (DNSCbContext)ar.AsyncState;
             try
             { 
@@ -289,15 +564,35 @@ namespace shadowsocks
                 remote.BeginConnect(remoteEP,
                     new AsyncCallback(remoteConnectCallback), null);
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                Console.WriteLine("Unknow Host " + ct.host);
-                this.Close();
+                try
+                {
+                    Console.WriteLine("Unknow Host " + ct.host);
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         private void remoteConnectCallback(IAsyncResult ar)
         {
+            try
+            {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
             try
             {
                 // Complete the connection.
@@ -327,32 +622,64 @@ namespace shadowsocks
         {
             try
             {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            try
+            {
                 int bytesRead = connection.EndReceive(ar);
 #if !DEBUG
                 Console.WriteLine("bytesRead from client: " + bytesRead.ToString());
 #endif
                 if (bytesRead > 0)
                 {
+                    server.SetTransfer((UInt64)bytesRead, 0);
                     byte[] buf = encryptor.Decrypt(connetionBuffer, bytesRead);
                     remote.BeginSend(buf, 0, buf.Length, 0, new AsyncCallback(RemoteSendCallback), null);
                 }
                 else
                 {
-#if !DEBUG
                     Console.WriteLine("client closed");
-#endif
                     this.Close();
                 }
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         private void RemoteReceiveCallback(IAsyncResult ar)
         {
+            try
+            {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
             try
             {
                 int bytesRead = remote.EndReceive(ar);
@@ -361,14 +688,14 @@ namespace shadowsocks
 #endif
                 if (bytesRead > 0)
                 {
+                    server.SetTransfer(0, (UInt64)bytesRead);
                     byte[] buf = encryptor.Encrypt(remoteBuffer, bytesRead);
                     connection.BeginSend(buf, 0, buf.Length, 0, new AsyncCallback(ConnectionSendCallback), null);
                 }
                 else
                 {
-#if !DEBUG
+                    //remote closed
                     Console.WriteLine("remote closed");
-#endif
                     this.Close();
                 }
             }
@@ -381,6 +708,19 @@ namespace shadowsocks
 
         private void RemoteSendCallback(IAsyncResult ar)
         {
+            try
+            {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
             try
             {
                 int bytesSend = remote.EndSend(ar);
@@ -401,6 +741,19 @@ namespace shadowsocks
         {
             try
             {
+                //already recycle
+                lock (this)
+                {
+                    if (closed)
+                        return;
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            try
+            {
                 int bytesSend = connection.EndSend(ar);
 #if !DEBUG
                 Console.WriteLine("bytesSend to client: " + bytesSend.ToString());
@@ -410,8 +763,15 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch(Exception)
+                {
+                    //already recycle
+                }
             }
         }
     }

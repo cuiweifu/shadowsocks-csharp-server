@@ -1,4 +1,5 @@
-﻿using System;
+﻿using shadowsocks_csharp;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -13,6 +14,7 @@ namespace shadowsocks
     {
         Config config;
         Server server;
+        ControlServer controlserver;
 
         public static MainForm instanse = null;
 
@@ -41,22 +43,18 @@ namespace shadowsocks
             }
         }
 
-        private void reload(Config config)
-        {
-            if (server != null)
-            {
-                server.Stop();
-            }
-            server = new Server(config);
-            server.Start();
-        }
-
         private void SetConfigLab(Config config)
         {
             label5.Text = config.server;
             label6.Text = config.server_port.ToString();
             label7.Text = config.method;
             label8.Text = config.password;
+            label12.Text = config.multiuser_pylisten.ToString();
+            if(config.multiuser_pylisten)
+            {
+                label6.Text = "start by python";
+                label8.Text = "start by python";
+            }
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -65,14 +63,31 @@ namespace shadowsocks
             try
             {
                 Config config = Config.Load();
+                Config.Save(config);
                 this.config = config;
-                reload(config);
                 SetConfigLab(config);
+                try
+                {
+                    Encryptor encryptor = new Encryptor(config.method, config.password);
+                    encryptor.Dispose();
+                }
+                catch(Exception)
+                {
+                    MessageBox.Show("Open SSL library init failed!");
+                    return;
+                }
+
+                if (config.multiuser_pylisten == true)
+                {
+                    this.controlserver = new ControlServer(config);
+                    controlserver.Start();
+                }
+                else
+                {
+                    server = new Server(config);
+                    server.Start();
+                }
                 this.Hide();
-            }
-            catch (FormatException)
-            {
-                MessageBox.Show("there is format problem");
             }
             catch (Exception ex)
             {

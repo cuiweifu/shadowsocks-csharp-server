@@ -14,7 +14,7 @@ namespace shadowsocks
         public int server_port;
         public string password;
         public string method;
-        public bool isDefault;
+        public bool multiuser_pylisten;
 
         private static void assert(bool condition)
         {
@@ -22,6 +22,18 @@ namespace shadowsocks
             {
                 throw new Exception("assertion failure");
             }
+        }
+
+        public Config Copy()
+        {
+            return new Config
+            {
+                server = this.server,
+                server_port = this.server_port,
+                password = this.password,
+                method = this.method,
+                multiuser_pylisten = this.multiuser_pylisten
+            };
         }
 
         public static Config Load()
@@ -34,24 +46,19 @@ namespace shadowsocks
                     assert(!string.IsNullOrEmpty(config.server));
                     assert(!string.IsNullOrEmpty(config.password));
                     assert(config.server_port > 0);
-                    config.isDefault = false;
                     return config;
                 }
             }
             catch (Exception e)
             {
                 Console.WriteLine(e);
-                Config config =  new Config
+                return new Config
                 {
                     server = "127.0.0.1",
                     server_port = 8388,
                     password = "barfoo!",
-                    method = "aes-128-cfb",
-                    isDefault = true
+                    multiuser_pylisten = false
                 };
-                if (!File.Exists(@"config.json"))
-                    Save(config);
-                return config;
             }
         }
 
@@ -67,6 +74,7 @@ namespace shadowsocks
                         server_port = config.server_port,
                         password = config.password,
                         method = config.method,
+                        multiuser_pylisten = config.multiuser_pylisten
                     });
                     sw.Write(jsonString);
                     sw.Flush();
