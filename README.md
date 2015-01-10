@@ -6,9 +6,7 @@ A fast tunnel proxy that helps you bypass firewalls.
 Install
 -------
 
-Makesure installed Runtime .Net 2.0 and Visual C++ 2010 Redistributable
-
-http://www.microsoft.com/en-us/download/details.aspx?id=5555
+Makesure installed Runtime .Net 2.0 and Visual C++ 2010 Redistributable http://www.microsoft.com/en-us/download/details.aspx?id=5555
 
 Install
 -------
@@ -21,7 +19,7 @@ Edit config.json
         "password":"mypassword",
         "timeout":300,
         "method":"aes-128-cfb",
-        "multiuser_pylisten":false}
+        "multiuser_pylisten":false
     }
 
 `multiuser_pylisten` is set for control multi server by python
