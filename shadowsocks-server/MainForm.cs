@@ -13,6 +13,10 @@ namespace shadowsocks
 {
     public partial class MainForm : Form
     {
+        [System.Runtime.InteropServices.DllImportAttribute("kernel32.dll", EntryPoint = "SetProcessWorkingSetSize", ExactSpelling = true, CharSet =
+            System.Runtime.InteropServices.CharSet.Ansi, SetLastError = true)]
+        private static extern int SetProcessWorkingSetSize(IntPtr process, int minimumWorkingSetSize, int maximumWorkingSetSize);
+
         Config config;
         Server server;
         ControlServer controlserver;
@@ -64,6 +68,7 @@ namespace shadowsocks
             {
                 GC.Collect(GC.MaxGeneration);
                 GC.WaitForPendingFinalizers();
+                //SetProcessWorkingSetSize(System.Diagnostics.Process.GetCurrentProcess().Handle, -1, -1);
                 Thread.Sleep(60 * 1000);
             }
         }
@@ -100,6 +105,7 @@ namespace shadowsocks
                     server.Start();
                 }
                 thReleaseMem = new Thread(new ThreadStart(ReleaseMemory));
+                thReleaseMem.Start();
                 thReleaseMem.IsBackground = true;
 
                 this.Hide();
