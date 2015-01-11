@@ -132,6 +132,7 @@ namespace shadowsocks
         public Config config;
         private Socket listener;
         private ServerTransfer transfer;
+        private bool closed = false;
 
         public Server(Config config)
         {
@@ -146,7 +147,7 @@ namespace shadowsocks
             {
                 this.transfer.transfer_upload += du;
                 this.transfer.transfer_download += dd;
-                //2KB~2MB
+                //<=4MB
                 if (this.transfer.nSetCount-- <= 0)
                 {
                     this.transfer.nSetCount = 1000;
@@ -203,23 +204,38 @@ namespace shadowsocks
 
         public void Start()
         {
-            listener = new Socket(AddressFamily.InterNetwork,
-                SocketType.Stream, ProtocolType.Tcp);
-            IPEndPoint severEndPoint = new IPEndPoint(0, config.server_port);
-            // Bind the socket to the sever endpoint and listen for incoming connections.
-            listener.Bind(severEndPoint);
-            //half open count
-            listener.Listen(10);
-            // Start an asynchronous socket to listen for connections.
-            Console.WriteLine("Waiting for a connection...");
-            listener.BeginAccept(
-                new AsyncCallback(AcceptCallback),
-                listener);
+            lock (this)
+            {
+                closed = true;
+                listener = new Socket(AddressFamily.InterNetwork,
+                    SocketType.Stream, ProtocolType.Tcp);
+                IPEndPoint severEndPoint = new IPEndPoint(0, config.server_port);
+                // Bind the socket to the sever endpoint and listen for incoming connections.
+                listener.Bind(severEndPoint);
+                //half open count
+                listener.Listen(10);
+                // Start an asynchronous socket to listen for connections.
+                Console.WriteLine("Waiting for a connection...");
+                listener.BeginAccept(
+                    new AsyncCallback(AcceptCallback),
+                    listener);
+            }
         }
 
         public void Stop()
         {
-            listener.Close();
+            lock (this)
+            {
+                if (closed)
+                {
+                    return;
+                }
+                closed = true;
+                listener.Close();
+                config = null;
+                listener = null;
+                transfer = null;
+            }
         }
 
         //local connected
@@ -235,23 +251,21 @@ namespace shadowsocks
                 handler.config = config;
                 handler.Start();
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                Console.WriteLine(e.ToString());
+                //maybe already recyle
+                //Console.WriteLine(e.ToString());
             }
-            finally
+            try
             {
-                try
-                {
-                    listener.BeginAccept(
-                        new AsyncCallback(AcceptCallback),
-                        listener);
-                }
-                catch (Exception)
-                {
-                    //stop by control
-                    //Console.WriteLine(e.ToString());
-                }
+                listener.BeginAccept(
+                    new AsyncCallback(AcceptCallback),
+                    listener);
+            }
+            catch (Exception)
+            {
+                //stop by control
+                //Console.WriteLine(e.ToString());
             }
         }
     }
@@ -304,8 +318,15 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
@@ -381,19 +402,20 @@ namespace shadowsocks
         //Single thread
         private void handshakeReceiveCallback(IAsyncResult ar)
         {
-            try
-            {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
+            //this check is moved to except
+            //try
+            //{
+            //    //already recycle
+            //    lock (this)
+            //    {
+            //        if (closed)
+            //            return;
+            //    }
+            //}
+            //catch (Exception)
+            //{
+            //    return;
+            //}
             try
             {
                 int bytesRead = connection.EndReceive(ar);
@@ -490,6 +512,7 @@ namespace shadowsocks
                     lock (timeOutTimer)
                     {
                         this.timeOutTimer.Dispose();
+                        timeOutTimer = null;
                     }
 
                     //Begin to connect remote
@@ -523,7 +546,9 @@ namespace shadowsocks
                     //handshake time out
                     lock (timeOutTimer)
                     {
-                        this.timeOutTimer.Dispose();
+                        if (timeOutTimer != null)
+                            this.timeOutTimer.Dispose();
+                        timeOutTimer = null;
                     }
                     Console.WriteLine(e.ToString());
                     this.Close();
@@ -539,20 +564,7 @@ namespace shadowsocks
         {
             try
             {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
-            DNSCbContext ct = (DNSCbContext)ar.AsyncState;
-            try
-            { 
+                DNSCbContext ct = (DNSCbContext)ar.AsyncState;
                 IPHostEntry ipHostInfo = Dns.EndGetHostEntry(ar);
                 IPAddress ipAddress = ipHostInfo.AddressList[0];
                 DNSCache.GetInstence().Put(ct.host, ipAddress);
@@ -568,6 +580,7 @@ namespace shadowsocks
             {
                 try
                 {
+                    DNSCbContext ct = (DNSCbContext)ar.AsyncState;
                     Console.WriteLine("Unknow Host " + ct.host);
                     this.Close();
                 }
@@ -580,19 +593,6 @@ namespace shadowsocks
 
         private void remoteConnectCallback(IAsyncResult ar)
         {
-            try
-            {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
             try
             {
                 // Complete the connection.
@@ -612,27 +612,21 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         //Callback Runing at other thread
         private void ConnectionReceiveCallback(IAsyncResult ar)
         {
-            try
-            {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
             try
             {
                 int bytesRead = connection.EndReceive(ar);
@@ -669,19 +663,6 @@ namespace shadowsocks
         {
             try
             {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
-            try
-            {
                 int bytesRead = remote.EndReceive(ar);
 #if !DEBUG
                 Console.WriteLine("bytesRead from remote: " + bytesRead.ToString());
@@ -701,26 +682,20 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         private void RemoteSendCallback(IAsyncResult ar)
         {
-            try
-            {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
             try
             {
                 int bytesSend = remote.EndSend(ar);
@@ -732,26 +707,20 @@ namespace shadowsocks
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
-                this.Close();
+                try
+                {
+                    Console.WriteLine(e.ToString());
+                    this.Close();
+                }
+                catch (Exception)
+                {
+                    //already recycle
+                }
             }
         }
 
         private void ConnectionSendCallback(IAsyncResult ar)
         {
-            try
-            {
-                //already recycle
-                lock (this)
-                {
-                    if (closed)
-                        return;
-                }
-            }
-            catch (Exception)
-            {
-                return;
-            }
             try
             {
                 int bytesSend = connection.EndSend(ar);

@@ -6,6 +6,7 @@ using System.Data;
 using System.Drawing;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace shadowsocks
@@ -15,6 +16,7 @@ namespace shadowsocks
         Config config;
         Server server;
         ControlServer controlserver;
+        Thread thReleaseMem = null;
 
         public static MainForm instanse = null;
 
@@ -56,6 +58,16 @@ namespace shadowsocks
                 label8.Text = "start by python";
             }
         }
+        public static void ReleaseMemory()
+        {
+            while (true)
+            {
+                GC.Collect(GC.MaxGeneration);
+                GC.WaitForPendingFinalizers();
+                Thread.Sleep(60 * 1000);
+            }
+        }
+
 
         private void Form1_Load(object sender, EventArgs e)
         {
@@ -87,6 +99,9 @@ namespace shadowsocks
                     server = new Server(config);
                     server.Start();
                 }
+                thReleaseMem = new Thread(new ThreadStart(ReleaseMemory));
+                thReleaseMem.IsBackground = true;
+
                 this.Hide();
             }
             catch (Exception ex)
