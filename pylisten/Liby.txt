@@ -402,7 +402,7 @@ host-suffix, googlesyndication.com, AdBlock
 # (J)
 # 京东
 host, dns.jd.com, AdBlock
-host-suffix, 101.124.19.122/32, AdBlock
+ip-cidr, 101.124.19.122/32, AdBlock
 # (H)
 # > HunanTV
 host-suffix, da.hunantv.com, AdBlock
